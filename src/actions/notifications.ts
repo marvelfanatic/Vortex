@@ -9,7 +9,6 @@ import safeCreateAction from './safeCreateAction';
 import * as Promise from 'bluebird';
 import { ipcMain, ipcRenderer } from 'electron';
 
-import * as reduxAct from 'redux-act';
 import { generate as shortid } from 'shortid';
 
 export * from '../types/IDialog';
@@ -40,6 +39,17 @@ export const addDialog = safeCreateAction(
     (id: string, type: string, title: string, content: IDialogContent,
      defaultAction: string, actions: string[]) =>
         ({id, type, title, content, defaultAction, actions}));
+
+/**
+ * Used to enable/disable a certain dialog action.
+ * @param id - The ID of the dialog window we want to affect.
+ * @param action - The dialog action we want to enable/disable
+ * @param isEnabled - Dictates whether we want to enable or disable the action
+ * @param tooltip - The tooltip/error text we want to display on hover.
+ */
+export const setActionEnabled = safeCreateAction(
+  'SET_ACTION_ENABLED',
+  (id: string, action: string, isEnabled: boolean, tooltip: string) => ({id, action, isEnabled, tooltip}));
 
 /**
  * dismiss the dialog being displayed
@@ -174,6 +184,7 @@ export function showDialog(type: DialogType, title: string,
                          actions.map(action => action.label)));
       DialogCallbacks.instance()[id] = (actionKey: string, input?: any) => {
         const action = actions.find(iter => iter.label === actionKey);
+        
         if (truthy(action.action)) {
           try {
             const res: any = action.action(input);

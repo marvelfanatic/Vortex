@@ -1,6 +1,20 @@
 export type DialogType =
   'success' | 'info' | 'error' | 'question';
 
+export interface IConditionResult {
+  result: boolean,
+  errorString?: string,
+}
+
+// Disabled actions are stored as kvp within the store.
+//  key: action, value: tooltip.
+export interface IDisabledAction {
+  action: string,
+  tooltip: string,
+}
+
+export type Condition = (action: string, dialogState: IDialogContent) => IConditionResult;
+
 export interface IDialogAction {
   label: string;
   default?: boolean;
@@ -16,15 +30,20 @@ export interface IDialog {
   content: IDialogContent;
   defaultAction: string;
   actions: string[];
+  disabled: IDisabledAction[];
 }
 
-export interface ICheckbox {
+export interface IValidate {
+  validate?: boolean;
+}
+
+export interface ICheckbox extends IValidate {
   id: string;
   text: string;
   value: boolean;
 }
 
-export interface IInput {
+export interface IInput extends IValidate {
   id: string;
   type?: 'text' | 'password' | 'number' | 'date' | 'time' | 'email' | 'url';
   value?: string;
@@ -74,6 +93,13 @@ export interface IDialogContent {
     wrap?: boolean;
     hideMessage?: boolean;
   };
+
+  /** 
+   * An array of conditions that allow us to validate this dialog's
+   *  content; we then decide whether to enable/disable certain actions
+   *  depending on the condition results.
+   */
+  validation?: Condition[];
 }
 
 export interface IDialogResult {

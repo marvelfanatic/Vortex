@@ -1,10 +1,11 @@
 import * as actions from '../actions/notifications';
 import { IReducerSpec } from '../types/IExtensionContext';
 
-import { pushSafe, removeValueIf, setSafe } from '../util/storeHelper';
+import { pushSafe, removeValueIf, setSafe, getSafe } from '../util/storeHelper';
 
 import update from 'immutability-helper';
 import { generate as shortid } from 'shortid';
+import { IDisabledAction } from '../actions/notifications';
 
 /**
  * reducer for changes to notifications
@@ -29,7 +30,7 @@ export const notificationsReducer: IReducerSpec = {
 
       return setSafe(
         setSafe(state, ['notifications', idx, 'progress'],  payload.progress),
-        ['notifications', idx, 'message'], payload.message);
+                       ['notifications', idx, 'message'], payload.message);
     },
     [actions.stopNotification as any]: (state, payload) => {
       return removeValueIf(removeValueIf(state, ['notifications'], (noti) => noti.id === payload),
@@ -40,6 +41,27 @@ export const notificationsReducer: IReducerSpec = {
     },
     [actions.dismissDialog as any]: (state, payload) => {
       return removeValueIf(state, ['dialogs'], (dialog) => dialog.id === payload);
+    },
+    [actions.setActionEnabled as any]: (state, payload) => {
+      const {id, action, isEnabled, tooltip} = payload;
+      const dialogId = state.dialogs.findIndex(noti => noti.id === id);
+      if (dialogId === -1) {
+        return state;
+      }
+
+      const statePath = ['dialogs', dialogId, 'disabled'];
+      const disabled: IDisabledAction[] = getSafe(state, statePath, undefined);
+
+      if (isEnabled) {
+        const temp: IDisabledAction[] = disabled !== undefined ? [...disabled] : [];
+        let ind = temp.findIndex(dis => dis.action === action) 
+        ind !== -1
+          ? temp[ind] = {action, tooltip}
+          : temp.push({action, tooltip});
+        return setSafe(state, statePath, temp)
+      } else {
+        return removeValueIf(state, statePath, dis => dis.action === action);
+      }
     },
   },
   defaults: {

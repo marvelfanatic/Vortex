@@ -1,11 +1,11 @@
 import { ILink, triggerDialogLink } from '../actions';
-import { closeDialog } from '../actions/notifications';
+import { closeDialog, setActionEnabled } from '../actions/notifications';
 import Collapse from '../controls/Collapse';
 import Icon from '../controls/Icon';
 import Webview from '../controls/Webview';
 import {
   DialogType, ICheckbox, IDialog,
-  IDialogContent, IInput,
+  IDialogContent, IInput, IConditionResult, IDisabledAction
 } from '../types/IDialog';
 import { IState } from '../types/IState';
 import bbcode from '../util/bbcode';
@@ -16,12 +16,13 @@ import * as I18next from 'i18next';
 import update from 'immutability-helper';
 import * as React from 'react';
 import {
-  Button, Checkbox, ControlLabel, FormControl, FormGroup,
-  Modal, Radio,
+  Checkbox, ControlLabel, FormControl, FormGroup,
+  Modal, Radio
 } from 'react-bootstrap';
 import * as ReactDOM from 'react-dom';
 import * as Redux from 'redux';
 import { ThunkDispatch } from 'redux-thunk';
+import { tooltip } from '../controls/api';
 
 const nop = () => undefined;
 
@@ -30,20 +31,24 @@ interface IActionProps {
   onDismiss: (action: string) => void;
   action: string;
   isDefault: boolean;
+  isEnabled: boolean;
+  tip: string;
 }
 
 class Action extends React.Component<IActionProps, {}> {
   public render(): JSX.Element {
-    const { t, action, isDefault } = this.props;
+    const { t, action, isDefault, isEnabled, tip } = this.props;
     return (
-      <Button
+      <tooltip.Button
         id='close'
         onClick={this.dismiss}
         bsStyle={isDefault ? 'primary' : undefined}
         ref={isDefault ? this.focus : undefined}
+        disabled={!isEnabled}
+        tooltip={tip !== undefined ? t(tip) : null}
       >
         {t(action)}
-      </Button>
+      </tooltip.Button>
     );
   }
 
@@ -65,6 +70,7 @@ interface IDialogConnectedProps {
 
 interface IDialogActionProps {
   onDismiss: (id: string, action: string, input: IDialogContent) => void;
+  onDisable: (id: string, action:string, isEnabled: boolean, tooltip: string) => void;
 }
 
 interface IComponentState {
@@ -139,6 +145,29 @@ class Dialog extends ComponentEx<IProps, IComponentState> {
         </Modal.Footer>
       </Modal>
     ) : null;
+  }
+
+  // Will attempt to retrieve the disabled object for the provided
+  //  action.
+  private findDisabledAction(action: string): IConditionResult {
+    const { dialogs } = this.props;
+    const defaultRes: IConditionResult = { result: true, errorString: '' }
+    const dialog = dialogs.length > 0 ? dialogs[0] : undefined;
+    if ((dialog === undefined)  
+    || (dialog.disabled === undefined )) {
+      return defaultRes;
+    }
+
+    const disabled: IDisabledAction = dialog.disabled !== undefined 
+      ? dialog.disabled.find(dis => dis.action === action)
+      : undefined;
+    
+    if (disabled !== undefined) {
+      const newRes: IConditionResult = { result: false, errorString: disabled.tooltip };
+      return newRes;
+    }
+
+    return defaultRes;
   }
 
   private translateParts(message: string, t: I18next.TranslationFunction, parameters?: any) {
@@ -242,6 +271,54 @@ class Dialog extends ComponentEx<IProps, IComponentState> {
     return <div className='dialog-container'>{controls}</div>;
   }
 
+  /** Function "intercepts" and validates values prior to them
+   *  being rendered. This only happens for inputs, checkboxes and radio buttons
+   *  which are flagged with validate = true.
+   * @returns The originally passed value
+   */
+  private validateValue(value: any): any {
+    const { dialogState } = this.state;
+    const { dialogs, onDisable } = this.props;
+
+    const dialog = dialogs.length > 0 ? dialogs[0] : undefined;
+    if ((dialog === undefined) || (dialogState === undefined) || (dialogState.validation === undefined)) {
+      return value;
+    }
+
+    // Attempt to run validation tests for each action on this dialog.
+    dialog.actions.forEach(action => {
+      // Check whether we can find an invalid condition for this action.
+      const invalidRes = dialogState.validation
+        .map(condition => (!!condition) && condition(action, dialogState))
+        .find(res => res.result === false);
+
+      const disabled = dialog.disabled !== undefined 
+        ? dialog.disabled.find(dis => dis.action === action)
+        : undefined;
+
+      if (invalidRes !== undefined && disabled === undefined) {
+        // We encountered a failed validation test - we need to disable
+        //  this action.
+        onDisable(dialog.id, action, true, invalidRes.errorString);
+
+      } else if (invalidRes === undefined && disabled !== undefined) {
+        // The action has been previously disabled, but now the validation tests
+        //  have passed successfully - we need to re-activate the action.
+        onDisable(dialog.id, action, false, undefined);
+        
+      } else if (invalidRes !== undefined 
+              && disabled !== undefined 
+              && invalidRes.errorString !== disabled.tooltip) {
+        // The action is still failing validation tests and is already
+        //  within the disabled array, but the error string is different
+        //  than the tooltip we display on the button - we update the tooltip.
+        onDisable(dialog.id, action, true, invalidRes.errorString);
+      }
+    });
+
+    return value;
+  }
+
   private renderInput = (input: IInput, idx: number) => {
     const { t } = this.props;
     return (
@@ -252,7 +329,7 @@ class Dialog extends ComponentEx<IProps, IComponentState> {
       <FormControl
         id={`dialoginput-${input.id}`}
         type={input.type || 'text'}
-        value={input.value || ''}
+        value={input.validate ? this.validateValue(input.value) : input.value || ''}
         label={input.label}
         placeholder={input.placeholder}
         onChange={this.changeInput}
@@ -279,7 +356,7 @@ class Dialog extends ComponentEx<IProps, IComponentState> {
       <Checkbox
         id={checkbox.id}
         key={checkbox.id}
-        checked={checkbox.value}
+        checked={checkbox.validate ? this.validateValue(checkbox.value) : checkbox.value}
         onChange={this.toggleCheckbox}
       >
         {t(checkbox.text)}
@@ -294,7 +371,7 @@ class Dialog extends ComponentEx<IProps, IComponentState> {
         id={checkbox.id}
         key={checkbox.id}
         name='dialog-radio'
-        checked={checkbox.value}
+        checked={checkbox.validate ? this.validateValue(checkbox.value) : checkbox.value}
         onChange={this.toggleRadio}
       >
         {t(checkbox.text)}
@@ -358,12 +435,16 @@ class Dialog extends ComponentEx<IProps, IComponentState> {
         choices: { $set: newChoices },
       },
     }));
+
+    //this.setState(data);
+    //this.validate(data.dialogState);
   }
 
   private renderAction = (action: string, isDefault: boolean): JSX.Element => {
     const { t } = this.props;
+    const disabled = this.findDisabledAction(action);
     return (
-      <Action t={t} key={action} action={action} isDefault={isDefault} onDismiss={this.dismiss} />
+      <Action t={t} key={action} action={action} isDefault={isDefault} onDismiss={this.dismiss} isEnabled={disabled.result} tip={disabled.errorString} />
     );
   }
 
@@ -419,6 +500,9 @@ function mapDispatchToProps<S>(dispatch: ThunkDispatch<S, null, Redux.Action>): 
   return {
     onDismiss: (id: string, action: string, input: any) =>
       dispatch(closeDialog(id, action, input)),
+
+    onDisable: (id: string, action: string, isEnabled: boolean, tooltip: string) =>
+      dispatch(setActionEnabled(id, action, isEnabled, tooltip)),
   };
 }
 
